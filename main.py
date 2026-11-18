@@ -13,6 +13,9 @@ Strategy (simple, robust, no fitted magic):
     with a positive 60-bar return, and unconditionally by bar 1420, so the entry
     always meets the race guardrail of at least one trade (bounded by the -1% stop
     and the final flatten).
+  * A minute with no recorder sample carries no CBBTC bar: the bot trades
+    nothing that minute (no orders, no new bar-derived state) instead of
+    deciding on stale prices.
   * One position at most, long only, full cash per entry; max slippage 100 bps.
 
 Determinism: no randomness, no clock, no network, no files outside the repo.
@@ -83,6 +86,7 @@ class Bot:
 
     def on_batch(self, state, batch):
         # 1. Fold in a fresh CBBTC bar (a gap minute carries none) and step the EMAs.
+        fresh = False
         for bar in batch["bars"]:
             if bar["symbol"] != SYMBOL:
                 continue
@@ -92,6 +96,7 @@ class Bot:
             self.last_t = t
             close = float(int(bar["c"]))
             self.closes.append(close)
+            fresh = True
             self.prev_gap = self.gap
             self.fast.push(close)
             self.slow.push(close)
@@ -107,6 +112,11 @@ class Bot:
                     self.pend_cross = False
                     self.pend_fallback = False
         if state.warming_up:
+            return []
+        if not fresh:
+            # No CBBTC bar this minute (the recorder took no sample): trade
+            # nothing on stale prices — no orders, and no bar-derived state
+            # changes beyond the fills already folded in above.
             return []
         held = state.positions.get(SYMBOL)
         # 3. A pending cross dies when the trend turns down or the momentum fades.
